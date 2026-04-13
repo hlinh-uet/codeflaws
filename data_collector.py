@@ -95,7 +95,11 @@ def extract_ground_truth(buggy_file, accepted_file):
         })
     
     # Ánh xạ các dòng bị thay đổi trong diff sang tên hàm
+    # modified_lines chứa vị trí dòng trong file BUGGY bị ảnh hưởng bởi diff:
+    #   - dòng bị xóa ('-'): chính dòng đó trong buggy
+    #   - dòng được thêm ('+'): vị trí chèn trong buggy (curr_line tại thời điểm đó)
     modified_lines = set()
+    curr_line = 1  # khởi tạo tránh NameError nếu diff không có hunk nào
     for line in diff_output.split('\n'):
         # diff -u header
         if line.startswith('@@'):
@@ -107,7 +111,9 @@ def extract_ground_truth(buggy_file, accepted_file):
             modified_lines.add(curr_line)
             curr_line += 1
         elif line.startswith('+') and not line.startswith('+++'):
-            pass # code thêm vào không map được với dòng cũ một cách trực tiếp
+            # Dòng được thêm vào accepted: vị trí chèn tương ứng với curr_line trong buggy
+            # (nằm giữa curr_line-1 và curr_line). Dùng max(1, curr_line-1) để xác định hàm.
+            modified_lines.add(max(1, curr_line - 1))
         elif line.startswith(' '):
             curr_line += 1
 
@@ -118,8 +124,9 @@ def extract_ground_truth(buggy_file, accepted_file):
                 changed_functions.add(func['name'])
                 break
                 
-    # Nếu main() bị sửa đổi và ta không tìm được function nào tốt hơn thì dùng main (nhiều bài CP code tất cả trong main)
-    if not changed_functions and len(functions) > 0 and modified_lines:
+    # Fallback: nếu không xác định được hàm cụ thể nhưng có diff, dùng main
+    # (phổ biến trong Codeflaws vì nhiều bài CP viết toàn bộ trong main)
+    if not changed_functions and modified_lines:
         changed_functions.add('main')
         
     return list(changed_functions)
