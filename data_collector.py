@@ -139,25 +139,25 @@ def main():
         
     print(f"[+] Tìm thấy source file: {source_file}")
 
-    # 1. Biên dịch (Compile) với cờ coverage
-    compile_cmd = ["gcc", "-O0", "--coverage", source_file, "-o", "program"]
+    # 1. Biên dịch (Compile) với CFLAGS chính thức của Codeflaws (từ Makefile) + --coverage
+    # Dùng đúng flags để tránh compile error hoặc sai kết quả test (thiếu -std=c99, -lm, v.v.)
+    base_name = os.path.splitext(source_file)[0]
+    expected_gcno = f"{base_name}.gcno"
+    expected_gcda = f"{base_name}.gcda"
+
+    compile_cmd = [
+        "gcc",
+        "-fno-optimize-sibling-calls", "-fno-strict-aliasing", "-fno-asm", "-std=c99",
+        "--coverage",
+        source_file, "-o", "program",
+        "-lm", "-O2",
+    ]
     print(f"[+] Đang biên dịch: {' '.join(compile_cmd)}")
     try:
         subprocess.run(compile_cmd, check=True, stderr=subprocess.PIPE)
     except subprocess.CalledProcessError as e:
         print(f"Lỗi biên dịch: {e.stderr.decode()}", file=sys.stderr)
         sys.exit(1)
-
-    base_name = os.path.splitext(source_file)[0]
-    expected_gcno = f"{base_name}.gcno"
-    expected_gcda = f"{base_name}.gcda"
-
-    # Auto-Rename: Quét thẻ .gcno bắt đầu bằng 'program-' đổi tên về <base_name>.gcno
-    for file in glob.glob("program-*.gcno") + glob.glob("program.gcno"):
-        try:
-            os.rename(file, expected_gcno)
-        except OSError:
-            pass
 
     # Lấy danh sách input
     inputs = glob.glob("input-*")
@@ -195,13 +195,7 @@ def main():
         except subprocess.TimeoutExpired:
             out_data = "" # Coi như FAIL nếu timeout
 
-        # Auto-Rename: Quét thẻ .gcda bắt đầu bằng 'program-' sau test đổi tên về <base_name>.gcda
-        for file in glob.glob("program-*.gcda") + glob.glob("program.gcda"):
-            try:
-                os.rename(file, expected_gcda)
-            except OSError:
-                pass
-            
+        
         # So sánh kết quả thực tế với output kỳ vọng
         passed = False
         if os.path.exists(out_file):
@@ -270,6 +264,7 @@ def main():
         
     coverage_data = {
         "source_file": source_file,
+        "accepted_file": accepted_file or "",
         "granularity": "method-level",
         "ground_truth_functions": ground_truth_funcs,
         "tests": results
