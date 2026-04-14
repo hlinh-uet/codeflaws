@@ -131,6 +131,30 @@ def extract_ground_truth(buggy_file, accepted_file):
         
     return list(changed_functions)
 
+def _rename_gcov_files(base_name, ext):
+    """
+    Apple Clang tạo file coverage tên <exe>-<base>.gc* thay vì <base>.gc*.
+    Tìm file khớp pattern *-<base><ext> và rename thành <base><ext> để gcov đọc được.
+    """
+    expected = f"{base_name}{ext}"
+    if os.path.exists(expected):
+        return
+    for f in glob.glob(f"*{ext}"):
+        if f.endswith(f"-{base_name}{ext}") or f == f"{base_name}-{base_name}{ext}":
+            try:
+                os.rename(f, expected)
+                return
+            except OSError:
+                pass
+    for f in glob.glob(f"*{ext}"):
+        if f != expected:
+            try:
+                os.rename(f, expected)
+                return
+            except OSError:
+                pass
+
+
 def main():
     source_file = get_buggy_file()
     if not source_file:
@@ -139,18 +163,23 @@ def main():
         
     print(f"[+] Tìm thấy source file: {source_file}")
 
-    # 1. Biên dịch (Compile) với CFLAGS chính thức của Codeflaws (từ Makefile) + --coverage
-    # Dùng đúng flags để tránh compile error hoặc sai kết quả test (thiếu -std=c99, -lm, v.v.)
+    # 1. Biên dịch (Compile) với --coverage -O0
+    #
+    # Apple Clang trên macOS đặt tên .gcno/.gcda theo pattern "<exe>-<source_base>.gc*"
+    # nhưng gcov tìm "<source_base>.gc*". Hàm _rename_gcov_files() xử lý rename.
+    # Phải dùng -O0 vì -O2 ngăn gcov ghi profiling data.
     base_name = os.path.splitext(source_file)[0]
+    exe_name = base_name
     expected_gcno = f"{base_name}.gcno"
     expected_gcda = f"{base_name}.gcda"
 
     compile_cmd = [
         "gcc",
         "-fno-optimize-sibling-calls", "-fno-strict-aliasing", "-fno-asm", "-std=c99",
-        "--coverage",
-        source_file, "-o", "program",
-        "-lm", "-O2",
+        "-Wno-error=implicit-function-declaration",
+        "--coverage", "-O0",
+        source_file, "-o", exe_name,
+        "-lm",
     ]
     print(f"[+] Đang biên dịch: {' '.join(compile_cmd)}")
     try:
@@ -158,6 +187,8 @@ def main():
     except subprocess.CalledProcessError as e:
         print(f"Lỗi biên dịch: {e.stderr.decode()}", file=sys.stderr)
         sys.exit(1)
+
+    _rename_gcov_files(base_name, ".gcno")
 
     # Lấy danh sách input
     inputs = glob.glob("input-*")
@@ -183,19 +214,20 @@ def main():
         test_id_str = f"{test_type}{tid}"
         
         # Xóa file .gcda cũ của lần chạy trước (nếu có) để tính đúng coverage cho test hiện tại
-        if os.path.exists(expected_gcda):
-            os.remove(expected_gcda)
+        for gcda in glob.glob("*.gcda"):
+            os.remove(gcda)
             
         # Chạy chương trình với input tương ứng
         out_data = ""
         try:
             with open(inp, 'r') as f_in:
-                proc = subprocess.run(["./program"], stdin=f_in, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+                proc = subprocess.run([f"./{exe_name}"], stdin=f_in, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
             out_data = proc.stdout
         except subprocess.TimeoutExpired:
-            out_data = "" # Coi như FAIL nếu timeout
+            out_data = ""
 
-        
+        _rename_gcov_files(base_name, ".gcda")
+
         # So sánh kết quả thực tế với output kỳ vọng
         passed = False
         if os.path.exists(out_file):
@@ -282,16 +314,23 @@ def main():
             except OSError:
                 pass
     
-    # Xoá thêm các file có tiền tố program-* và file program
     for f in glob.glob("program-*"):
         try:
             os.remove(f)
         except OSError:
             pass
-            
+
+    if os.path.exists(exe_name) and exe_name != source_file:
+        try:
+            os.remove(exe_name)
+        except OSError:
+            pass
     if os.path.exists("program"):
-        os.remove("program")
-    print("[+] Hoàn tất dọn dẹp các file tạm (.gcda, .gcno, .gcov, program). Thư mục đã sạch sẽ.")
+        try:
+            os.remove("program")
+        except OSError:
+            pass
+    print("[+] Hoàn tất dọn dẹp các file tạm (.gcda, .gcno, .gcov, exe). Thư mục đã sạch sẽ.")
 
 if __name__ == "__main__":
     main()

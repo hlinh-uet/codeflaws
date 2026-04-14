@@ -3,7 +3,7 @@ import subprocess
 import shutil
 
 # 3. Kiểm soát số lượng: 0 = Chạy tất cả, > 0 = Giới hạn số lượng chạy thử
-LIMIT = 100
+LIMIT = 50
 
 def main():
     base_dir = os.path.abspath(os.path.dirname(__file__))
